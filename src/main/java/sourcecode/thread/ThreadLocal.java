@@ -507,6 +507,8 @@ public class ThreadLocal<T> {
          * Version of getEntry method for use when key is not found in
          * its direct hash slot.
          *
+         * 当getEntry方法在hash槽中没找到对应的key时，调用getEntryAfterMiss方法
+         *
          * @param  key the thread local object
          * @param  i the table index for key's hash code
          * @param  e the entry at table[i]
@@ -521,8 +523,10 @@ public class ThreadLocal<T> {
                 if (k == key)
                     return e;
                 if (k == null)
+                    //删除旧的entry
                     expungeStaleEntry(i);
                 else
+                    //向后移动一位？？？
                     i = nextIndex(i, len);
                 e = tab[i];
             }
