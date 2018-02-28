@@ -1,0 +1,9 @@
+.DS_Store
+.idea/compiler.xml
+.idea/inspectionProfiles/
+.idea/kotlinc.xml
+.idea/misc.xml
+.idea/modules.xml
+.idea/workspace.xml
+source_code_demo.iml
+target/
