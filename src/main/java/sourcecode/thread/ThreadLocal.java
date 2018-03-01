@@ -509,6 +509,7 @@ public class ThreadLocal<T> {
          * its direct hash slot.
          *
          * 未在其直接散列槽中找到key时使用getEntryAfterMiss方法。
+         * 当getEntry方法在hash槽中没找到对应的key时，调用getEntryAfterMiss方法
          *
          * @param  key the thread local object
          * @param  i the table index for key's hash code
@@ -527,6 +528,7 @@ public class ThreadLocal<T> {
                     return e;
                 // 该entry对应的ThreadLocal已经被回收，调用expungeStaleEntry来清理无效的entry
                 if (k == null)
+                    //删除旧的entry
                     expungeStaleEntry(i);
                 else
                     // 环形意义下往后面走
