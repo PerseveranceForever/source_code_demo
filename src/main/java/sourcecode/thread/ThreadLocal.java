@@ -500,12 +500,15 @@ public class ThreadLocal<T> {
             if (e != null && e.get() == key)
                 return e;
             else
+                //没找到key对应的entry
                 return getEntryAfterMiss(key, i, e);
         }
 
         /**
          * Version of getEntry method for use when key is not found in
          * its direct hash slot.
+         *
+         * 未在其直接散列槽中找到key时使用getEntryAfterMiss方法。
          *
          * @param  key the thread local object
          * @param  i the table index for key's hash code
@@ -516,13 +519,17 @@ public class ThreadLocal<T> {
             Entry[] tab = table;
             int len = tab.length;
 
+            //基于线性探测法不断向后探测直到遇到空entry
             while (e != null) {
                 ThreadLocal<?> k = e.get();
+                // 找到目标
                 if (k == key)
                     return e;
+                // 该entry对应的ThreadLocal已经被回收，调用expungeStaleEntry来清理无效的entry
                 if (k == null)
                     expungeStaleEntry(i);
                 else
+                    // 环形意义下往后面走
                     i = nextIndex(i, len);
                 e = tab[i];
             }
@@ -545,23 +552,23 @@ public class ThreadLocal<T> {
             Entry[] tab = table;
             int len = tab.length;
             int i = key.threadLocalHashCode & (len-1);
-
+            // 线性探测法解决hash冲突的情况
             for (Entry e = tab[i];
                  e != null;
                  e = tab[i = nextIndex(i, len)]) {
                 ThreadLocal<?> k = e.get();
-
+                // 找到对应的entry,覆盖entry的value
                 if (k == key) {
                     e.value = value;
                     return;
                 }
-
+                // key失效，替换失效的entry
                 if (k == null) {
                     replaceStaleEntry(key, value, i);
                     return;
                 }
             }
-
+            //找到Entry数组空位，插入新的Entry
             tab[i] = new Entry(key, value);
             int sz = ++size;
             if (!cleanSomeSlots(i, sz) && sz >= threshold)
@@ -667,6 +674,12 @@ public class ThreadLocal<T> {
          * any other stale entries encountered before the trailing null.  See
          * Knuth, Section 6.4
          *
+         * 这个函数是ThreadLocal中核心清理函数，它做的事情：
+         * 就是从staleSlot开始遍历，将无效（弱引用指向对象被回收）清理，即对应entry中的value置为null，
+         * 将指向这个entry的table[i]置为null，直到扫到空entry。
+         * 另外，在过程中还会对非空的entry作rehash。
+         * 可以说这个函数的作用就是从staleSlot开始清理连续段中的slot（断开强引用，rehash slot等）
+         *
          * @param staleSlot index of slot known to have null key
          * @return the index of the next null slot after staleSlot
          * (all between staleSlot and this slot will have been checked
@@ -676,8 +689,9 @@ public class ThreadLocal<T> {
             Entry[] tab = table;
             int len = tab.length;
 
-            // expunge entry at staleSlot
+            // 因为entry对应的ThreadLocal已经被回收，将该entry对应的value设为null，显式断开强引用
             tab[staleSlot].value = null;
+            // 显式将执行该entry的table[i]为null，以便垃圾回收
             tab[staleSlot] = null;
             size--;
 
@@ -688,17 +702,40 @@ public class ThreadLocal<T> {
                  (e = tab[i]) != null;
                  i = nextIndex(i, len)) {
                 ThreadLocal<?> k = e.get();
+                // 清理对应ThreadLocal已经被回收的entry
                 if (k == null) {
                     e.value = null;
                     tab[i] = null;
                     size--;
                 } else {
+                    /*
+                     * 对于还没有被回收的情况，需要做一次rehash。
+                     * 如果对应的ThreadLocal的ID对len取模出来的索引h不为当前位置i，
+                     * 则从h向后线性探测到第一个空的slot，把当前的entry给挪过去。
+                     */
                     int h = k.threadLocalHashCode & (len - 1);
                     if (h != i) {
                         tab[i] = null;
 
-                        // Unlike Knuth 6.4 Algorithm R, we must scan until
-                        // null because multiple entries could have been stale.
+                        /*
+                         * 在原代码的这里有句注释值得一提，原注释如下：
+                         *
+                         * Unlike Knuth 6.4 Algorithm R, we must scan until
+                         * null because multiple entries could have been stale.
+                         *
+                         * 这段话提及了Knuth高德纳的著作TAOCP（《计算机程序设计艺术》）的6.4章节（散列）
+                         * 中的R算法。R算法描述了如何从使用线性探测的散列表中删除一个元素。
+                         * R算法维护了一个上次删除元素的index，当在非空连续段中扫到某个entry的哈希值取模后的索引
+                         * 还没有遍历到时，会将该entry挪到index那个位置，并更新当前位置为新的index，
+                         * 继续向后扫描直到遇到空的entry。
+                         *
+                         * ThreadLocalMap因为使用了弱引用，所以其实每个slot的状态有三种也即
+                         * 有效（value未回收），无效（value已回收），空（entry==null）。
+                         * 正是因为ThreadLocalMap的entry有三种状态，所以不能完全套高德纳原书的R算法。
+                         *
+                         * 因为expungeStaleEntry函数在扫描过程中还会对无效slot清理将之转为空slot，
+                         * 如果直接套用R算法，可能会出现具有相同哈希值的entry之间断开（中间有空entry）。
+                         */
                         while (tab[h] != null)
                             h = nextIndex(h, len);
                         tab[h] = e;
@@ -716,6 +753,16 @@ public class ThreadLocal<T> {
          * scanning (fast but retains garbage) and a number of scans
          * proportional to number of elements, that would find all
          * garbage but would cause some insertions to take O(n) time.
+         *
+         * 启发式地清理slot,
+         * i对应entry是非无效（指向的ThreadLocal没被回收，或者entry本身为空）
+         * n是用于控制控制扫描次数的
+         * 正常情况下如果log n次扫描没有发现无效slot，函数就结束了
+         * 但是如果发现了无效的slot，将n置为table的长度len，做一次连续段的清理
+         * 再从下一个空的slot开始继续扫描
+         *
+         * 这个函数有两处地方会被调用，一处是插入的时候可能会被调用，另外个是在替换无效slot的时候可能会被调用，
+         * 区别是前者传入的n为元素个数，后者为table的容量
          *
          * @param i a position known NOT to hold a stale entry. The
          * scan starts at the element after i.
@@ -737,11 +784,14 @@ public class ThreadLocal<T> {
             Entry[] tab = table;
             int len = tab.length;
             do {
+                // i在任何情况下自己都不会是一个无效slot，所以从下一个开始判断
                 i = nextIndex(i, len);
                 Entry e = tab[i];
                 if (e != null && e.get() == null) {
+                    // 扩大扫描控制因子
                     n = len;
                     removed = true;
+                    // 清理一个连续段
                     i = expungeStaleEntry(i);
                 }
             } while ( (n >>>= 1) != 0);
@@ -752,6 +802,9 @@ public class ThreadLocal<T> {
          * Re-pack and/or re-size the table. First scan the entire
          * table removing stale entries. If this doesn't sufficiently
          * shrink the size of the table, double the table size.
+         *
+         * 重新包装/重新设置table数组的大小。 首先扫描整个表格，删除陈旧的条目。
+         * 如果这不能充分缩小表格的大小，则将表格大小加倍。
          */
         private void rehash() {
             expungeStaleEntries();
@@ -763,6 +816,8 @@ public class ThreadLocal<T> {
 
         /**
          * Double the capacity of the table.
+         *
+         * 数组容量翻倍
          */
         private void resize() {
             Entry[] oldTab = table;
@@ -778,6 +833,7 @@ public class ThreadLocal<T> {
                     if (k == null) {
                         e.value = null; // Help the GC
                     } else {
+                        // 线性探测来存放Entry
                         int h = k.threadLocalHashCode & (newLen - 1);
                         while (newTab[h] != null)
                             h = nextIndex(h, newLen);
@@ -794,6 +850,8 @@ public class ThreadLocal<T> {
 
         /**
          * Expunge all stale entries in the table.
+         *
+         * 做一次全量清理
          */
         private void expungeStaleEntries() {
             Entry[] tab = table;
