@@ -369,6 +369,8 @@ public class ThreadLocal<T> {
          * 这个hash表的entry继承了WeakReference，使用它的主引用字段作为键（它总是一个ThreadLocal对象）。
          * 请注意，null键（即entry.get（）== null）表示该键不再被引用，因此可以从表中删除条目。
          * 这些条目在下面的代码中被称为"陈旧条目"
+         *
+         * key是ThreadLocal的弱引用，在GC时可能会被回收
          */
         static class Entry extends WeakReference<ThreadLocal<?>> {
             /** The value associated with this ThreadLocal. */
